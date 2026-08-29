@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import pathlib
+import re
 import sys
 from types import ModuleType
 from typing import Any
@@ -39,6 +40,26 @@ def load_validator() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def validate_proxy_source_and_tests_syntax_aware(module: ModuleType) -> None:
+    """Preserve every proxy check while accepting gofmt field alignment."""
+
+    original_require_file = module.require_file
+
+    def require_file_with_normalized_test_spacing(path: pathlib.Path) -> str:
+        text = original_require_file(path)
+        if path == module.PROXY_TEST:
+            # The base policy checks named table cases. Go permits and gofmt may
+            # retain aligned spacing such as `name:   "connection upgrade"`.
+            text = re.sub(r'name:\s+"', 'name: "', text)
+        return text
+
+    module.require_file = require_file_with_normalized_test_spacing
+    try:
+        module.validate_proxy_source_and_tests()
+    finally:
+        module.require_file = original_require_file
 
 
 def validate_compose_with_infrastructure_replica_exemption(module: ModuleType) -> None:
@@ -82,7 +103,7 @@ def main() -> None:
     module.validate_runtime()
     module.validate_label_contract()
     module.validate_relabel_contract()
-    module.validate_proxy_source_and_tests()
+    validate_proxy_source_and_tests_syntax_aware(module)
     validate_compose_with_infrastructure_replica_exemption(module)
     module.validate_packaging_docs_and_secrets()
     print("Codestra cAdvisor corporate configuration validation PASS")
