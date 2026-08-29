@@ -46,6 +46,11 @@ func TestAllowedDockerRequest(t *testing.T) {
 func TestDeniedDockerRequest(t *testing.T) {
 	t.Parallel()
 
+	requestBody := func(req *http.Request) {
+		req.Body = io.NopCloser(strings.NewReader("not allowed"))
+		req.ContentLength = 11
+	}
+
 	denied := []struct {
 		name   string
 		method string
@@ -61,15 +66,7 @@ func TestDeniedDockerRequest(t *testing.T) {
 		{name: "plugin list", method: http.MethodGet, target: "http://docker/plugins"},
 		{name: "service list", method: http.MethodGet, target: "http://docker/services"},
 		{name: "build endpoint", method: http.MethodGet, target: "http://docker/build"},
-		{
-			name:   "request body",
-			method: http.MethodGet,
-			target: "http://docker/info",
-			mutate: func(req *http.Request) {
-				req.Body = io.NopCloser(strings.NewReader("not allowed"))
-				req.ContentLength = 11
-			},
-		},
+		{name: "request body", method: http.MethodGet, target: "http://docker/info", mutate: requestBody},
 		{
 			name:   "connection upgrade",
 			method: http.MethodGet,
