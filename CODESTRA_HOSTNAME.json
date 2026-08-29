@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "service": "cAdvisor",
+  "repository": "appolon1908-hue/Codestra-cAdvisor",
+  "canonical_hostname": "cadv.codestra.media",
+  "dns_record": {"type": "A", "value": "37.27.128.39"},
+  "exposure": "private_only",
+  "public_native_service_port": false,
+  "dns_is_not_exposure_authority": true,
+  "alternate_codestra_media_hostnames_allowed": false,
+  "internal_service_access": "private_network_or_container_dns"
+}
