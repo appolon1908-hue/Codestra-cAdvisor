@@ -1,0 +1,96 @@
+name: Codestra Upstream Source Sync
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [development]
+    paths:
+      - CODESTRA_UPSTREAM.json
+      - .github/workflows/upstream-source-sync.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: development
+          token: ${{ secrets.CODESTRA_AUTOMATION_TOKEN }}
+      - name: Import official upstream source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -t values < <(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('CODESTRA_UPSTREAM.json').read_text())
+          print(data['upstream_clone_url']); print(data['upstream_ref']); print(data['import_path'])
+          PY
+          )
+          UPSTREAM_URL="${values[0]}"; UPSTREAM_REF="${values[1]}"; IMPORT_PATH="${values[2]}"
+          [[ "$UPSTREAM_URL" == "https://github.com/google/cadvisor.git" ]]
+          [[ "$UPSTREAM_REF" == "master" ]]
+          [[ "$IMPORT_PATH" == "upstream" ]]
+          rm -rf .codestra-upstream-src "$IMPORT_PATH"
+          GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch "$UPSTREAM_REF" "$UPSTREAM_URL" .codestra-upstream-src
+          UPSTREAM_SHA="$(git -C .codestra-upstream-src rev-parse HEAD)"
+          rm -rf .codestra-upstream-src/.git
+          mv .codestra-upstream-src "$IMPORT_PATH"
+          export UPSTREAM_URL UPSTREAM_REF UPSTREAM_SHA
+          python3 - <<'PY'
+          import json, os, re
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          sanitizations=[]
+          fixture=Path('upstream/perf/io/data')
+          if fixture.exists():
+              text=fixture.read_text(errors='surrogateescape')
+              original=text
+              patterns=[
+                  (r'ya29\.[A-Za-z0-9._~+/-]+', 'GOOGLE_OAUTH_TEST_TOKEN_INVALID'),
+                  (r'(?i)("access_token"\s*:\s*")[^"]+(\")', r'\1GOOGLE_OAUTH_TEST_TOKEN_INVALID\2'),
+                  (r'(?i)(access_token=)[A-Za-z0-9._~+/=-]+', r'\1GOOGLE_OAUTH_TEST_TOKEN_INVALID'),
+                  (r'(?<![A-Za-z0-9])1/[A-Za-z0-9._~-]{20,}', 'GOOGLE_OAUTH_TEST_TOKEN_INVALID'),
+              ]
+              replacements=0
+              for pattern,repl in patterns:
+                  text,n=re.subn(pattern,repl,text)
+                  replacements += n
+              if text != original:
+                  fixture.write_text(text, errors='surrogateescape')
+                  sanitizations.append({'rule':'replace Google OAuth2-like values in upstream perf fixture with explicit invalid test placeholders','files_changed':1,'replacements':replacements})
+
+          lock={'schema_version':'1.0','upstream_clone_url':os.environ['UPSTREAM_URL'],'upstream_ref':os.environ['UPSTREAM_REF'],'upstream_commit':os.environ['UPSTREAM_SHA'],'import_path':'upstream','synchronized_at':datetime.now(timezone.utc).isoformat(),'deployment_enabled':False,'secret_material_allowed_in_git':False}
+          if sanitizations:
+              lock['sanitizations']=sanitizations
+          Path('CODESTRA_UPSTREAM_LOCK.json').write_text(json.dumps(lock,indent=2)+'\n')
+          PY
+          git config user.name 'codestra-upstream-sync'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -A upstream CODESTRA_UPSTREAM_LOCK.json
+          git diff --cached --quiet && exit 0
+          git commit -m "vendor: sync official cAdvisor upstream ${UPSTREAM_SHA}"
+          SYNC_BRANCH="automation/upstream-cadvisor-${UPSTREAM_SHA:0:12}"
+          git fetch origin "refs/heads/${SYNC_BRANCH}:refs/remotes/origin/${SYNC_BRANCH}" || true
+          git push --force-with-lease="refs/heads/${SYNC_BRANCH}" origin "HEAD:refs/heads/${SYNC_BRANCH}"
+          existing_pr="$(gh pr list \
+            --head "${SYNC_BRANCH}" \
+            --base development \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')"
+          if [[ -z "${existing_pr}" ]]; then
+            gh pr create \
+              --base development \
+              --head "${SYNC_BRANCH}" \
+              --title "vendor: review cAdvisor upstream ${UPSTREAM_SHA:0:12}" \
+              --body "Automated vendored-source update. Merge only after exact-source CI and review pass; normal promotion through test, staging, production, and main remains required."
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.CODESTRA_AUTOMATION_TOKEN }}
