@@ -31,12 +31,12 @@ Repository CI renders and inspects `codestra/deploy/compose.candidate.yaml`, pro
 A future approved deployment may use:
 
 ```bash
-cp .env.example .env
+cp codestra/deploy/runtime.env.example .env
 # Set accepted image digests, deployment identity, Docker socket GID, and
 # external Docker secrets for the proxy certificate, key, and Prometheus CA.
-docker compose -f codestra/deploy/compose.candidate.yaml config
-docker compose -f codestra/deploy/compose.candidate.yaml up -d
-docker compose -f codestra/deploy/compose.candidate.yaml ps
+docker compose --env-file .env -f codestra/deploy/compose.candidate.yaml config
+docker compose --env-file .env -f codestra/deploy/compose.candidate.yaml up -d
+docker compose --env-file .env -f codestra/deploy/compose.candidate.yaml ps
 ```
 
 The native cAdvisor listener is internal-only. Metrics must be tested through `cadvisor-metrics-proxy:9443` from the observability network with the approved Prometheus client certificate; plaintext or unauthenticated `curl` is not a valid smoke test. These commands are documentation only during the repository-first phase. Before Prometheus target activation, later deployment evidence must prove private-only reachability, expected Docker workloads, absence of environment/tenant labels, bounded sample cardinality, required labels, mTLS scrape success, and rollback.
@@ -44,3 +44,5 @@ The native cAdvisor listener is internal-only. Metrics must be tested through `c
 ## Promotion and safety
 
 Promotion is `feature/* -> development -> test -> staging -> production -> main`. Merging changes source authority only and does not deploy. `DEPLOYMENT_ENABLED=NO` remains binding until the 14-repository release manifest is accepted.
+
+Automated upstream synchronization requires the repository Actions secret `CODESTRA_AUTOMATION_TOKEN`, backed by an approved GitHub App or fine-grained token with contents and pull-request permissions. The non-default token is required so generated review PRs trigger normal validation; absence of the secret fails the sync closed.

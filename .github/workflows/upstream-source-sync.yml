@@ -20,6 +20,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: development
+          token: ${{ secrets.CODESTRA_AUTOMATION_TOKEN }}
       - name: Import official upstream source
         shell: bash
         run: |
@@ -76,7 +77,8 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "vendor: sync official cAdvisor upstream ${UPSTREAM_SHA}"
           SYNC_BRANCH="automation/upstream-cadvisor-${UPSTREAM_SHA:0:12}"
-          git push origin "HEAD:refs/heads/${SYNC_BRANCH}"
+          git fetch origin "refs/heads/${SYNC_BRANCH}:refs/remotes/origin/${SYNC_BRANCH}" || true
+          git push --force-with-lease="refs/heads/${SYNC_BRANCH}" origin "HEAD:refs/heads/${SYNC_BRANCH}"
           existing_pr="$(gh pr list \
             --head "${SYNC_BRANCH}" \
             --base development \
@@ -91,4 +93,4 @@ jobs:
               --body "Automated vendored-source update. Merge only after exact-source CI and review pass; normal promotion through test, staging, production, and main remains required."
           fi
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CODESTRA_AUTOMATION_TOKEN }}
