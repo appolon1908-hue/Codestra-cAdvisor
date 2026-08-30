@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1.7
+
+ARG GO_BUILDER_IMAGE
+ARG CADVISOR_BASE_IMAGE
+
+FROM ${GO_BUILDER_IMAGE} AS healthcheck-builder
+WORKDIR /src
+COPY codestra/deploy/healthcheck.go ./healthcheck.go
+RUN CGO_ENABLED=0 GOOS=linux go build \
+      -trimpath \
+      -ldflags='-s -w -buildid=' \
+      -o /out/codestra-healthcheck \
+      ./healthcheck.go
+
+FROM ${CADVISOR_BASE_IMAGE}
+LABEL org.opencontainers.image.title="Codestra Corporate cAdvisor"
+LABEL org.opencontainers.image.description="Private container resource metrics with governed labels and no direct Docker socket"
+LABEL org.opencontainers.image.vendor="Codestra"
+
+COPY --from=healthcheck-builder --chown=0:0 --chmod=0555 /out/codestra-healthcheck /codestra-healthcheck
+
+USER 0:0
