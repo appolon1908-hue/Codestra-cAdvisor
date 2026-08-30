@@ -26,19 +26,20 @@ See `codestra/enterprise-profile.v1.json` and `codestra/docs/CORPORATE-FEATURES.
 
 ## Validation
 
-Repository CI renders and inspects `deploy/compose.yaml`, proves immutable-image enforcement, private binding, read-only mounts, required host visibility, label suppression, disabled profiling/high-cost metrics, and the absence of public port publication.
+Repository CI renders and inspects `codestra/deploy/compose.candidate.yaml`, proves immutable-image enforcement, read-only Docker API access, mTLS-only metrics exposure, read-only host mounts, label suppression, disabled profiling/high-cost metrics, and the absence of host or public port publication.
 
 A future approved deployment may use:
 
 ```bash
 cp .env.example .env
-# Set an accepted image digest and this host's approved private IP.
-docker compose -f deploy/compose.yaml config
-docker compose -f deploy/compose.yaml up -d
-curl --fail http://PRIVATE_IP:8080/metrics
+# Set accepted image digests, deployment identity, Docker socket GID, and
+# external Docker secrets for the proxy certificate, key, and Prometheus CA.
+docker compose -f codestra/deploy/compose.candidate.yaml config
+docker compose -f codestra/deploy/compose.candidate.yaml up -d
+docker compose -f codestra/deploy/compose.candidate.yaml ps
 ```
 
-Those commands are documentation only during the repository-first phase. Before Prometheus target activation, later deployment evidence must prove private-only reachability, expected Docker workloads, absence of environment/tenant labels, bounded sample cardinality, required labels, scrape success, and rollback.
+The native cAdvisor listener is internal-only. Metrics must be tested through `cadvisor-metrics-proxy:9443` from the observability network with the approved Prometheus client certificate; plaintext or unauthenticated `curl` is not a valid smoke test. These commands are documentation only during the repository-first phase. Before Prometheus target activation, later deployment evidence must prove private-only reachability, expected Docker workloads, absence of environment/tenant labels, bounded sample cardinality, required labels, mTLS scrape success, and rollback.
 
 ## Promotion and safety
 
