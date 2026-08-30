@@ -1,0 +1,53 @@
+name: codestra-cadvisor
+
+services:
+  cadvisor:
+    image: ${CADVISOR_IMAGE:?CADVISOR_IMAGE must be an immutable image digest}
+    restart: unless-stopped
+    user: "0:0"
+    privileged: ${CADVISOR_PRIVILEGED:-false}
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    command:
+      - --port=8080
+      - --prometheus_endpoint=/metrics
+      - --docker_only=true
+      - --housekeeping_interval=30s
+      - --max_housekeeping_interval=60s
+      - --allow_dynamic_housekeeping=true
+      - --store_container_labels=false
+      - --whitelisted_container_labels=com.codestra.business,com.codestra.application,com.codestra.service,com.codestra.environment,com.codestra.deployment,com.codestra.owner
+      - --disable_metrics=advtcp,cpu_topology,cpuset,hugetlb,memory_numa,percpu,process,referenced_memory,resctrl,sched,tcp,udp
+      - --event_storage_event_limit=default=0
+      - --event_storage_age_limit=default=0
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+      - /etc/machine-id:/etc/machine-id:ro
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+      - /var/run:size=16m,mode=0755
+    networks:
+      - codestra_observability
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.10"
+          memory: 128M
+
+networks:
+  codestra_observability:
+    external: true
+    name: codestra-observability
