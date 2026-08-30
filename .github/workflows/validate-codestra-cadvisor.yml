@@ -87,8 +87,8 @@ jobs:
           CGO_ENABLED=0 go build -trimpath -o /tmp/codestra-healthcheck codestra/deploy/healthcheck.go
 
       - name: Build cAdvisor from locked source
-        working-directory: upstream
-        run: go build -trimpath -o ../.bin/cadvisor ./cmd
+        working-directory: upstream/cmd
+        run: go build -trimpath -o ../../.bin/cadvisor .
 
       - name: Prove every configured cAdvisor flag exists in locked source
         run: |
