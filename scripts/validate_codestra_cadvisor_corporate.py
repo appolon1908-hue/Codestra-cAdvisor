@@ -12,6 +12,11 @@ full seven-label application contract. This wrapper therefore never mutates the
 contract constant. It validates the real Compose labels first and supplies a
 synthetic infrastructure replica only to the base Compose checker, preserving the
 full whitelist and every other hardening check.
+
+The locked upstream cAdvisor command module no longer exposes a `--rootfs` CLI
+flag. Upstream still requires the read-only host-root bind at `/rootfs`, so this
+wrapper requires that mount, rejects the removed flag, and reconciles only that
+single source-version difference before invoking the base Compose policy.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "scripts" / "validate_codestra_cadvisor.py"
+REMOVED_LOCKED_SOURCE_FLAG = "--rootfs=/rootfs"
 
 
 def fail(message: str) -> None:
@@ -62,11 +68,34 @@ def validate_proxy_source_and_tests_syntax_aware(module: ModuleType) -> None:
         module.require_file = original_require_file
 
 
+def validate_locked_source_rootfs_contract(module: ModuleType, compose: dict[str, Any]) -> None:
+    cadvisor = compose.get("services", {}).get("cadvisor", {})
+    command = {str(item) for item in cadvisor.get("command", [])}
+    if REMOVED_LOCKED_SOURCE_FLAG in command:
+        module.fail(
+            "locked cAdvisor source no longer supports --rootfs; retain the "
+            "read-only /rootfs bind without the removed CLI flag"
+        )
+
+    root_mounts = [
+        item
+        for item in cadvisor.get("volumes", [])
+        if isinstance(item, dict) and item.get("target") == "/rootfs"
+    ]
+    if len(root_mounts) != 1 or root_mounts[0].get("read_only") is not True:
+        module.fail("cAdvisor requires exactly one read-only host-root bind at /rootfs")
+    if root_mounts[0].get("source") != "/":
+        module.fail("cAdvisor /rootfs must map the host root and may not use another source")
+
+
 def validate_compose_with_infrastructure_replica_exemption(module: ModuleType) -> None:
     original_load_yaml = module.load_yaml
+    original_required_flags = module.REQUIRED_CADVISOR_FLAGS
     compose = original_load_yaml(module.COMPOSE)
     services = compose.get("services", {})
     stable_labels = module.DOCKER_LABELS - {"codestra.replica"}
+
+    validate_locked_source_rootfs_contract(module, compose)
 
     for name, service in services.items():
         labels = service.get("labels", {})
@@ -91,11 +120,15 @@ def validate_compose_with_infrastructure_replica_exemption(module: ModuleType) -
             service.setdefault("labels", {})["codestra.replica"] = "infrastructure"
         return value
 
+    module.REQUIRED_CADVISOR_FLAGS = set(original_required_flags) - {
+        REMOVED_LOCKED_SOURCE_FLAG
+    }
     module.load_yaml = load_yaml_with_infrastructure_replica
     try:
         module.validate_compose()
     finally:
         module.load_yaml = original_load_yaml
+        module.REQUIRED_CADVISOR_FLAGS = original_required_flags
 
 
 def main() -> None:
