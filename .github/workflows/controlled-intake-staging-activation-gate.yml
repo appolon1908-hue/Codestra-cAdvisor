@@ -95,13 +95,20 @@ jobs:
               "external_effects_default": "disabled",
           }
           for key, value in expected.items(): assert source[key] == value, (key, source.get(key), value)
-          for key in ("immutable_image_digest", "signed_release_artifact_sha256", "sbom_sha256", "vulnerability_report_sha256"):
-              assert re.fullmatch(r"sha256:[0-9a-f]{64}", source[key])
-          endpoints = {(x["method"], x["path"], x["client_id"], x["scope"], x["public_exposure"]) for x in data["private_endpoints"]}
-          assert ("GET", "/metrics", "monitoring-readonly", "metrics.read", False) in endpoints
-          assert ("GET", "/v1/runtime/safety", "monitoring-readonly", "health.read", False) in endpoints
+          hash_keys = ("immutable_image_digest", "signed_release_artifact_sha256", "sbom_sha256", "vulnerability_report_sha256")
+          assert all(re.fullmatch(r"sha256:[0-9a-f]{64}", source[key]) for key in hash_keys)
+          declared = data["private_endpoints"]
+          allowed = {
+              ("GET", "/metrics", "monitoring-readonly", "metrics.read", False),
+              ("GET", "/v1/runtime/safety", "monitoring-readonly", "health.read", False),
+          }
+          actual = {(item["method"], item["path"], item["client_id"], item["scope"], item["public_exposure"]) for item in declared}
+          assert len(declared) == len(allowed)
+          assert actual == allowed
+          assert all(item["method"] == "GET" and item["client_id"] == "monitoring-readonly" and item["public_exposure"] is False for item in declared)
           credentials = data["staging_credentials"]
-          assert credentials["storage"] == "OUTSIDE_GIT" and credentials["static_tokens_allowed"] is False
+          assert credentials["storage"] == "OUTSIDE_GIT"
+          assert credentials["static_tokens_allowed"] is False
           assert credentials["secret_values_committed"] is False
           assert 60 <= credentials["minimum_token_ttl_seconds"] <= credentials["maximum_token_ttl_seconds"] <= 900
           evidence = data["staging_evidence"]
@@ -115,10 +122,12 @@ jobs:
           assert policy["prometheus_activation_pr_required"] is True
           assert policy["prometheus_activation_pr_must_cite_image_digest"] is True
           assert policy["prometheus_activation_pr_must_cite_evidence_checksum"] is True
-          assert policy["blackbox_target_current_state"] == "pending" and policy["blackbox_must_remain_pending"] is True
+          assert policy["blackbox_target_current_state"] == "pending"
+          assert policy["blackbox_must_remain_pending"] is True
           assert policy["blackbox_activation_requires_independent_review"] is True
           assert policy["blackbox_probe_must_be_side_effect_free"] is True
           assert policy["blackbox_allowed_methods"] == ["GET", "HEAD"]
+          if data["component"] == "blackbox_exporter": assert policy["blackbox_allowed_status"] == "PENDING_ONLY"
           assert policy["production_activation_authorized"] is False
           assert all(value is False for value in data["runtime_effects"].values())
           print("CONTROLLED_STAGING_IMMUTABLE_DIGEST_LOCK=PASS")
@@ -157,7 +166,8 @@ jobs:
           pattern = r"sha256:[0-9a-f]{64}"
           if not re.fullmatch(pattern, image) or image != source["immutable_image_digest"]: raise SystemExit("image digest must exactly match the contract lock")
           if not re.fullmatch(pattern, evidence): raise SystemExit("runtime evidence checksum must use sha256:<64 lowercase hex>")
-          if evidence == source["signed_release_artifact_sha256"]: raise SystemExit("runtime evidence must not reuse the release-artifact checksum")
+          forbidden_evidence = {source["immutable_image_digest"], source["signed_release_artifact_sha256"], source["sbom_sha256"], source["vulnerability_report_sha256"]}
+          if evidence in forbidden_evidence: raise SystemExit("runtime evidence must differ from every release or image checksum")
           for name in ("CONFIRM_PROMETHEUS_ONLY", "CONFIRM_BLACKBOX_PENDING", "CONFIRM_NO_EXTERNAL_EFFECTS"):
               if os.environ[name].lower() != "true": raise SystemExit(f"{name.lower()} confirmation is required")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
