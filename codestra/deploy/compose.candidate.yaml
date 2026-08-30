@@ -82,6 +82,7 @@ services:
       - --docker=tcp://docker-api-proxy:2375
       - --docker_only=true
       - --docker_root=/var/lib/docker
+      - --rootfs=/rootfs
       - --listen_ip=0.0.0.0
       - --port=8080
       - --prometheus_endpoint=/metrics
