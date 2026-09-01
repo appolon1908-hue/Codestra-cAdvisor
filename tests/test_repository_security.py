@@ -86,6 +86,17 @@ class RepositorySecurityTests(unittest.TestCase):
                 ):
                     VALIDATOR.validate_sync(unsafe, yaml.safe_load(unsafe))
 
+    def test_quoted_fragments_and_missing_approved_push_fail_closed(self) -> None:
+        safe = 'git push origin "HEAD:refs/heads/${SYNC_BRANCH}"'
+        quoted = self.sync_source.replace(
+            safe, safe + "\n          g''it p''ush origin HEAD:refs/heads/main"
+        )
+        with self.assertRaisesRegex(ValueError, "protected_branch_sync_forbidden"):
+            VALIDATOR.validate_sync(quoted, yaml.safe_load(quoted))
+        missing = self.sync_source.replace(safe, "true")
+        with self.assertRaisesRegex(ValueError, "approved_sync_push_count_invalid"):
+            VALIDATOR.validate_sync(missing, yaml.safe_load(missing))
+
     def test_bot_created_pr_dispatches_exact_branch_validation(self) -> None:
         self.assertEqual(
             self.sync_document["permissions"],

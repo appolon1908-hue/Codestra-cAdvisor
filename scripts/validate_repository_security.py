@@ -34,10 +34,8 @@ def logical_shell_lines(source: str) -> tuple[str, ...]:
 
 def reject_protected_pushes(source: str) -> None:
     approved = ["git", "push", "origin", "HEAD:refs/heads/${SYNC_BRANCH}"]
+    approved_count = 0
     for line in logical_shell_lines(source):
-        probe = re.sub(r"\\([^\n])", r"\1", line)
-        if re.search(r"\bgit\b.*\bpush\b", probe) is None:
-            continue
         try:
             lexer = shlex.shlex(line, posix=True, punctuation_chars="();&|<>")
             lexer.whitespace_split = True
@@ -45,8 +43,30 @@ def reject_protected_pushes(source: str) -> None:
             words = list(lexer)
         except ValueError as error:
             raise ValueError("sync_shell_parse_failed") from error
-        if words != approved:
+        if words == approved:
+            approved_count += 1
+            continue
+        git_push = False
+        for index, word in enumerate(words):
+            if Path(word).name != "git":
+                continue
+            command_index = index + 1
+            while command_index < len(words) and words[command_index].startswith("-"):
+                option = words[command_index]
+                command_index += 2 if option in {
+                    "-c", "-C", "--git-dir", "--work-tree"
+                } else 1
+            if command_index < len(words) and words[command_index] == "push":
+                git_push = True
+                break
+        nested_push = any(
+            re.search(r"\bgit\s+push\b", re.sub(r"\\([^\n])", r"\1", word))
+            for word in words
+        )
+        if git_push or nested_push:
             raise ValueError("protected_branch_sync_forbidden:push_not_exact")
+    if approved_count != 1:
+        raise ValueError("approved_sync_push_count_invalid")
 
 
 def validate_sync_branch_authority(source: str) -> None:
