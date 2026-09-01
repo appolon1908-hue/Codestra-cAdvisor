@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import unittest
 from pathlib import Path
 
@@ -23,7 +24,11 @@ class RepositorySecurityTests(unittest.TestCase):
         self.sync_document = yaml.safe_load(self.sync_source)
 
     def test_current_repository_security_contract(self) -> None:
-        VALIDATOR.validate_repository()
+        VALIDATOR.validate_repository(
+            allow_exact_pin_bootstrap=(
+                os.environ.get("CADVISOR_PENDING_SYNC") == "1"
+            )
+        )
 
     def test_mutable_upstream_ref_is_rejected(self) -> None:
         source = json.loads((ROOT / "CODESTRA_UPSTREAM.json").read_text())
@@ -31,6 +36,21 @@ class RepositorySecurityTests(unittest.TestCase):
         source["upstream_ref"] = "main"
         with self.assertRaisesRegex(ValueError, "upstream_ref_must_be_exact_commit"):
             VALIDATOR.validate_upstream(source, lock)
+
+    def test_exact_pin_bootstrap_allows_only_source_authority_drift(self) -> None:
+        source = json.loads((ROOT / "CODESTRA_UPSTREAM.json").read_text())
+        lock = json.loads((ROOT / "CODESTRA_UPSTREAM_LOCK.json").read_text())
+        source["upstream_ref"] = "b" * 40
+        with self.assertRaisesRegex(ValueError, "upstream_lock_not_bound"):
+            VALIDATOR.validate_upstream(source, lock)
+        VALIDATOR.validate_upstream(
+            source, lock, allow_exact_pin_bootstrap=True
+        )
+        lock["upstream_commit"] = "c" * 40
+        with self.assertRaisesRegex(ValueError, "upstream_lock_not_bound"):
+            VALIDATOR.validate_upstream(
+                source, lock, allow_exact_pin_bootstrap=True
+            )
 
     def test_sync_uses_reviewed_retry_safe_pull_request(self) -> None:
         VALIDATOR.validate_sync(self.sync_source, self.sync_document)
@@ -103,6 +123,12 @@ class RepositorySecurityTests(unittest.TestCase):
             safe + '\n          G=git; "$G" push origin HEAD:refs/heads/main',
             safe + '\n          verb=push; git "$verb" origin HEAD:refs/heads/main',
             safe + '\n          suffix=; git p${suffix}ush origin HEAD:refs/heads/main',
+            safe
+            + '\n          G=/usr/bin/git; P=pu; P+=sh; { "$G" "$P" origin HEAD:refs/heads/main; }',
+            safe
+            + '\n          git -c alias.x=push x origin HEAD:refs/heads/main',
+            safe
+            + '\n          git -calias.x=push x origin HEAD:refs/heads/main',
         ):
             with self.subTest(command=command):
                 unsafe = self.sync_source.replace(safe, command)
@@ -141,6 +167,22 @@ class RepositorySecurityTests(unittest.TestCase):
         self.assertIn("rev-parse 'HEAD^{tree}'", source)
         self.assertIn("git rev-parse 'HEAD:upstream'", source)
         self.assertIn('[[ "$vendored_tree" == "$official_tree" ]]', source)
+
+    def test_validation_classifies_only_exact_upstream_pin_bootstrap(self) -> None:
+        source = (ROOT / ".github/workflows/validate.yml").read_text()
+        for token in (
+            "Classify an exact upstream-pin bootstrap",
+            '(( ${#changed[@]} == 1 ))',
+            '[[ "${changed[0]}" == CODESTRA_UPSTREAM.json ]]',
+            "validator_args+=(--allow-exact-pin-bootstrap)",
+            'validation_ref="$locked_upstream_ref"',
+            'base_sha="$CADVISOR_VALIDATION_BASE_SHA"',
+            'os.environ.get("CADVISOR_PENDING_SYNC") == "1"',
+        ):
+            self.assertIn(
+                token,
+                source if "os.environ" not in token else Path(__file__).read_text(),
+            )
 
     def test_actions_are_pinned_and_validation_is_unconditional(self) -> None:
         source = (ROOT / ".github/workflows/validate.yml").read_text()

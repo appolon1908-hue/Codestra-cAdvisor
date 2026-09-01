@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import re
@@ -63,7 +64,7 @@ def reject_protected_pushes(source: str) -> None:
                 raise ValueError("protected_branch_sync_forbidden:dynamic_command")
         segments: list[list[str]] = [[]]
         for word in words:
-            if word and set(word) <= set("();&|"):
+            if word in {"{", "}"} or (word and set(word) <= set("();&|")):
                 segments.append([])
             else:
                 segments[-1].append(word)
@@ -83,6 +84,21 @@ def reject_protected_pushes(source: str) -> None:
             command_index = index + 1
             while command_index < len(words) and words[command_index].startswith("-"):
                 option = words[command_index]
+                if option == "-c":
+                    if command_index + 1 >= len(words):
+                        raise ValueError("sync_shell_parse_failed")
+                    config = words[command_index + 1]
+                    if (
+                        config.lower().startswith("alias.")
+                        or "$" in config
+                    ):
+                        raise ValueError(
+                            "protected_branch_sync_forbidden:dynamic_command"
+                        )
+                if option.lower().startswith(("-calias.", "--config-env=alias.")):
+                    raise ValueError(
+                        "protected_branch_sync_forbidden:dynamic_command"
+                    )
                 command_index += 2 if option in {
                     "-c", "-C", "--git-dir", "--work-tree"
                 } else 1
@@ -123,7 +139,9 @@ def validate_sync_branch_authority(source: str) -> None:
             raise ValueError("sync_branch_authority_invalid")
 
 
-def validate_upstream(source: dict, lock: dict) -> None:
+def validate_upstream(
+    source: dict, lock: dict, *, allow_exact_pin_bootstrap: bool = False
+) -> None:
     expected = {
         "component": "cAdvisor",
         "codestra_repository": "appolon1908-hue/Codestra-cAdvisor",
@@ -147,7 +165,15 @@ def validate_upstream(source: dict, lock: dict) -> None:
     ):
         if lock.get(key) != expected[key]:
             raise ValueError(f"upstream_lock_drift:{key}")
-    if lock.get("upstream_ref") != ref or lock.get("upstream_commit") != ref:
+    locked_ref = lock.get("upstream_ref")
+    locked_commit = lock.get("upstream_commit")
+    if (
+        not isinstance(locked_ref, str)
+        or re.fullmatch(r"[0-9a-f]{40}", locked_ref) is None
+        or locked_commit != locked_ref
+    ):
+        raise ValueError("upstream_lock_not_bound_to_exact_ref")
+    if locked_ref != ref and not allow_exact_pin_bootstrap:
         raise ValueError("upstream_lock_not_bound_to_exact_ref")
 
 
@@ -199,6 +225,12 @@ def validate_workflow(source: str) -> None:
         "persist-credentials: false",
         "fetch-depth: 0",
         "Bind vendored Git tree to exact official commit",
+        "Classify an exact upstream-pin bootstrap",
+        '(( ${#changed[@]} == 1 ))',
+        '[[ "${changed[0]}" == CODESTRA_UPSTREAM.json ]]',
+        "validator_args+=(--allow-exact-pin-bootstrap)",
+        'validation_ref="$locked_upstream_ref"',
+        'base_sha="$CADVISOR_VALIDATION_BASE_SHA"',
         "git rev-parse 'HEAD:upstream'",
         '[[ "$vendored_tree" == "$official_tree" ]]',
         'git diff --check "$base_sha" "$GITHUB_SHA" -- . \':(exclude)upstream\'',
@@ -214,7 +246,7 @@ def validate_workflow(source: str) -> None:
         raise ValueError("whitespace_check_must_use_committed_range")
 
 
-def validate_repository() -> None:
+def validate_repository(*, allow_exact_pin_bootstrap: bool = False) -> None:
     paths = {
         "source": ROOT / "CODESTRA_UPSTREAM.json",
         "lock": ROOT / "CODESTRA_UPSTREAM_LOCK.json",
@@ -228,7 +260,9 @@ def validate_repository() -> None:
     lock = json.loads(paths["lock"].read_text())
     sync_source = paths["sync"].read_text()
     validate_source = paths["validate"].read_text()
-    validate_upstream(source, lock)
+    validate_upstream(
+        source, lock, allow_exact_pin_bootstrap=allow_exact_pin_bootstrap
+    )
     validate_sync(sync_source, yaml.safe_load(sync_source))
     yaml.safe_load(validate_source)
     validate_workflow(validate_source)
@@ -237,8 +271,13 @@ def validate_repository() -> None:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--allow-exact-pin-bootstrap", action="store_true")
+    arguments = parser.parse_args()
     try:
-        validate_repository()
+        validate_repository(
+            allow_exact_pin_bootstrap=arguments.allow_exact_pin_bootstrap
+        )
     except (OSError, ValueError, json.JSONDecodeError, yaml.YAMLError) as error:
         raise SystemExit(f"CADVISOR_SOURCE_SECURITY=FAIL ERROR={error}") from error
     print("CADVISOR_SOURCE_SECURITY=PASS")
