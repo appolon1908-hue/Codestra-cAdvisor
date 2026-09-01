@@ -84,7 +84,7 @@ jobs:
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           export GIT_AUTHOR_DATE="$UPSTREAM_TIMESTAMP"
           export GIT_COMMITTER_DATE="$UPSTREAM_TIMESTAMP"
-          readonly SYNC_BRANCH="sync/cadvisor-upstream-${UPSTREAM_SHA}"
+          readonly SYNC_BRANCH="sync/cadvisor-upstream-${UPSTREAM_SHA}-${GITHUB_SHA}"
           git switch --create "$SYNC_BRANCH"
           git fetch --depth 1 --no-tags "$UPSTREAM_URL" "$UPSTREAM_SHA"
           git rm -r --cached --quiet --ignore-unmatch upstream
@@ -110,7 +110,7 @@ jobs:
             mapfile -t remote_parents < <(git show -s --format=%P "$remote_ref")
             read -r -a remote_parent_values <<< "${remote_parents[0]}"
             (( ${#remote_parent_values[@]} == 1 ))
-            git merge-base --is-ancestor "${remote_parent_values[0]}" "$GITHUB_SHA"
+            [[ "${remote_parent_values[0]}" == "$GITHUB_SHA" ]]
             mapfile -t remote_changes < <(
               git diff --name-only "${remote_parent_values[0]}" "$remote_ref"
             )
@@ -130,10 +130,23 @@ jobs:
           fi
 
           mapfile -t OPEN_PRS < <(
-            gh pr list --repo "$GITHUB_REPOSITORY" --state open \
-              --head "$SYNC_BRANCH" --json number --jq '.[].number'
+            gh api --method GET "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f state=open \
+              -f base="main" \
+              -f head="${GITHUB_REPOSITORY_OWNER}:${SYNC_BRANCH}" \
+              -f per_page=100 \
+              --paginate \
+              --jq '.[] | [.number,.base.ref,.head.ref,.head.sha,.head.repo.full_name] | @tsv'
           )
-          if (( ${#OPEN_PRS[@]} > 1 )); then
+          if (( ${#OPEN_PRS[@]} == 1 )); then
+            IFS=$'\t' read -r pr_number pr_base pr_head pr_head_sha pr_repository extra <<< "${OPEN_PRS[0]}"
+            [[ "$pr_number" =~ ^[1-9][0-9]*$ ]]
+            [[ "$pr_base" == "main" ]]
+            [[ "$pr_head" == "$SYNC_BRANCH" ]]
+            [[ "$pr_head_sha" == "$LOCAL_SHA" ]]
+            [[ "$pr_repository" == "$GITHUB_REPOSITORY" ]]
+            [[ -z "${extra:-}" ]]
+          elif (( ${#OPEN_PRS[@]} > 1 )); then
             echo 'Multiple open synchronization pull requests found.' >&2
             exit 3
           elif (( ${#OPEN_PRS[@]} == 0 )); then

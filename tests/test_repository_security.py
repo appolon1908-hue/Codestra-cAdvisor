@@ -64,7 +64,7 @@ class RepositorySecurityTests(unittest.TestCase):
             '[[ "$(git rev-parse "$remote_ref")" == "$REMOTE_SHA" ]]',
             'git rev-parse "${remote_ref}:upstream"',
             'git rev-parse "${remote_ref}:CODESTRA_UPSTREAM_LOCK.json"',
-            'git merge-base --is-ancestor "${remote_parent_values[0]}" "$GITHUB_SHA"',
+            '[[ "${remote_parent_values[0]}" == "$GITHUB_SHA" ]]',
             'git diff --name-only "${remote_parent_values[0]}" "$remote_ref"',
             'LOCAL_SHA="$REMOTE_SHA"',
             "if (( ${#OPEN_PRS[@]} > 1 )); then",
@@ -129,6 +129,8 @@ class RepositorySecurityTests(unittest.TestCase):
             + '\n          git -c alias.x=push x origin HEAD:refs/heads/main',
             safe
             + '\n          git -calias.x=push x origin HEAD:refs/heads/main',
+            safe
+            + '\n          git config alias.x push; git x origin HEAD:refs/heads/main',
         ):
             with self.subTest(command=command):
                 unsafe = self.sync_source.replace(safe, command)
@@ -152,6 +154,16 @@ class RepositorySecurityTests(unittest.TestCase):
             VALIDATOR.validate_sync(unsafe, yaml.safe_load(unsafe))
 
     def test_bot_created_pr_dispatches_exact_branch_validation(self) -> None:
+        assignment = (
+            'readonly SYNC_BRANCH="sync/cadvisor-upstream-'
+            '${UPSTREAM_SHA}-${GITHUB_SHA}"'
+        )
+        self.assertIn(assignment, self.sync_source)
+        without_epoch = self.sync_source.replace(
+            assignment, assignment.replace("-${GITHUB_SHA}", "")
+        )
+        with self.assertRaisesRegex(ValueError, "sync_branch_authority_invalid"):
+            VALIDATOR.validate_sync(without_epoch, yaml.safe_load(without_epoch))
         self.assertEqual(
             self.sync_document["permissions"],
             {"actions": "write", "contents": "write", "pull-requests": "write"},
@@ -160,6 +172,26 @@ class RepositorySecurityTests(unittest.TestCase):
             'gh workflow run validate.yml --repo "$GITHUB_REPOSITORY" --ref "$SYNC_BRANCH"',
             self.sync_source,
         )
+
+    def test_existing_sync_pr_identity_is_exact(self) -> None:
+        for token in (
+            'gh api --method GET "repos/${GITHUB_REPOSITORY}/pulls"',
+            '-f head="${GITHUB_REPOSITORY_OWNER}:${SYNC_BRANCH}"',
+            '.head.repo.full_name',
+            '[[ "$pr_head_sha" == "$LOCAL_SHA" ]]',
+            '[[ "$pr_repository" == "$GITHUB_REPOSITORY" ]]',
+        ):
+            self.assertIn(token, self.sync_source)
+        for token in (
+            '[[ "$pr_head_sha" == "$LOCAL_SHA" ]]',
+            '[[ "$pr_repository" == "$GITHUB_REPOSITORY" ]]',
+        ):
+            with self.subTest(token=token):
+                unsafe = self.sync_source.replace(token, "true")
+                with self.assertRaisesRegex(
+                    ValueError, "reviewed_sync_boundary_missing"
+                ):
+                    VALIDATOR.validate_sync(unsafe, yaml.safe_load(unsafe))
 
     def test_vendored_tree_is_bound_to_fresh_official_commit(self) -> None:
         source = (ROOT / ".github/workflows/validate.yml").read_text()
