@@ -71,6 +71,21 @@ class RepositorySecurityTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "protected_branch_sync_forbidden"):
                     VALIDATOR.validate_sync(unsafe, yaml.safe_load(unsafe))
 
+    def test_brace_expansion_and_indirect_destinations_fail_closed(self) -> None:
+        safe = 'git push origin "HEAD:refs/heads/${SYNC_BRANCH}"'
+        for command in (
+            "git push origin HEAD:refs/heads/{main,topic}",
+            "git -c remote.origin.push=HEAD:refs/heads/main push origin",
+            "git push origin 2>/dev/null HEAD:refs/heads/main",
+            "bash -c 'git push origin HEAD:refs/heads/main'",
+        ):
+            with self.subTest(command=command):
+                unsafe = self.sync_source.replace(safe, command)
+                with self.assertRaisesRegex(
+                    ValueError, "protected_branch_sync_forbidden:push_not_exact"
+                ):
+                    VALIDATOR.validate_sync(unsafe, yaml.safe_load(unsafe))
+
     def test_bot_created_pr_dispatches_exact_branch_validation(self) -> None:
         self.assertEqual(
             self.sync_document["permissions"],

@@ -33,8 +33,7 @@ def logical_shell_lines(source: str) -> tuple[str, ...]:
 
 
 def reject_protected_pushes(source: str) -> None:
-    protected = {"main", "staging", "production"}
-    separators = {";", "&&", "||", "|", "&", "(", ")", "<", ">"}
+    approved = ["git", "push", "origin", "HEAD:refs/heads/${SYNC_BRANCH}"]
     for line in logical_shell_lines(source):
         probe = re.sub(r"\\([^\n])", r"\1", line)
         if re.search(r"\bgit\b.*\bpush\b", probe) is None:
@@ -46,28 +45,8 @@ def reject_protected_pushes(source: str) -> None:
             words = list(lexer)
         except ValueError as error:
             raise ValueError("sync_shell_parse_failed") from error
-        for index, word in enumerate(words):
-            if Path(word).name != "git":
-                continue
-            command_index = index + 1
-            while command_index < len(words) and words[command_index].startswith("-"):
-                option = words[command_index]
-                command_index += 2 if option in {"-c", "-C", "--git-dir", "--work-tree"} else 1
-            if command_index >= len(words) or words[command_index] != "push":
-                continue
-            for candidate in words[command_index + 1 :]:
-                if candidate in separators:
-                    break
-                if candidate in {"--all", "--branches", "--force", "--force-with-lease", "--mirror", "-f"} or candidate.startswith(("--force=", "--force-with-lease=")):
-                    raise ValueError("protected_branch_sync_forbidden")
-                refspec = candidate.lstrip("+")
-                if refspec == "HEAD:refs/heads/${SYNC_BRANCH}":
-                    continue
-                if "$" in refspec or "`" in refspec or any(marker in refspec for marker in ("*", "?", "[")):
-                    raise ValueError("protected_branch_sync_forbidden")
-                destination = refspec.rsplit(":", 1)[-1].removeprefix("refs/heads/")
-                if destination in protected:
-                    raise ValueError("protected_branch_sync_forbidden")
+        if words != approved:
+            raise ValueError("protected_branch_sync_forbidden:push_not_exact")
 
 
 def validate_sync_branch_authority(source: str) -> None:
