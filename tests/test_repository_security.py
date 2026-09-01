@@ -41,11 +41,35 @@ class RepositorySecurityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "protected_branch_sync_forbidden"):
             VALIDATOR.validate_sync(unsafe, self.sync_document)
         for token in (
-            '[[ "$REMOTE_SHA" == "$LOCAL_SHA" ]]',
+            '[[ "$(git rev-parse "$remote_ref")" == "$REMOTE_SHA" ]]',
+            'git rev-parse "${remote_ref}:upstream"',
+            'git rev-parse "${remote_ref}:CODESTRA_UPSTREAM_LOCK.json"',
+            'git merge-base --is-ancestor "${remote_parent_values[0]}" "$GITHUB_SHA"',
+            'git diff --name-only "${remote_parent_values[0]}" "$remote_ref"',
+            'LOCAL_SHA="$REMOTE_SHA"',
             "if (( ${#OPEN_PRS[@]} > 1 )); then",
             'export GIT_AUTHOR_DATE="$UPSTREAM_TIMESTAMP"',
         ):
             self.assertIn(token, self.sync_source)
+        self.assertNotIn('[[ "$REMOTE_SHA" == "$LOCAL_SHA" ]]', self.sync_source)
+
+    def test_retry_reuses_equivalent_existing_branch_after_main_advances(self) -> None:
+        required = 'LOCAL_SHA="$REMOTE_SHA"'
+        unsafe = self.sync_source.replace(required, "true")
+        with self.assertRaisesRegex(ValueError, "reviewed_sync_boundary_missing"):
+            VALIDATOR.validate_sync(unsafe, yaml.safe_load(unsafe))
+
+    def test_sync_rejects_quoted_and_obscured_protected_refspecs(self) -> None:
+        safe = 'git push origin "HEAD:refs/heads/${SYNC_BRANCH}"'
+        for command in (
+            'git push origin "HEAD:refs/heads/main"',
+            '(git push origin HEAD:refs/heads/staging)',
+            '/usr/bin/git -c protocol.version=2 push origin HEAD:refs/heads/production>/dev/null',
+        ):
+            with self.subTest(command=command):
+                unsafe = self.sync_source.replace(safe, command)
+                with self.assertRaisesRegex(ValueError, "protected_branch_sync_forbidden"):
+                    VALIDATOR.validate_sync(unsafe, yaml.safe_load(unsafe))
 
     def test_bot_created_pr_dispatches_exact_branch_validation(self) -> None:
         self.assertEqual(

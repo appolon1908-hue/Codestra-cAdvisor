@@ -84,7 +84,7 @@ jobs:
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           export GIT_AUTHOR_DATE="$UPSTREAM_TIMESTAMP"
           export GIT_COMMITTER_DATE="$UPSTREAM_TIMESTAMP"
-          SYNC_BRANCH="sync/cadvisor-upstream-${UPSTREAM_SHA}"
+          readonly SYNC_BRANCH="sync/cadvisor-upstream-${UPSTREAM_SHA}"
           git switch --create "$SYNC_BRANCH"
           git fetch --depth 1 --no-tags "$UPSTREAM_URL" "$UPSTREAM_SHA"
           git rm -r --cached --quiet --ignore-unmatch upstream
@@ -99,10 +99,32 @@ jobs:
           LOCAL_SHA="$(git rev-parse HEAD)"
           REMOTE_SHA="$(git ls-remote --heads origin "refs/heads/${SYNC_BRANCH}" | awk '{print $1}')"
           if [[ -n "$REMOTE_SHA" ]]; then
-            [[ "$REMOTE_SHA" == "$LOCAL_SHA" ]] || {
-              echo 'Existing sync branch differs; refusing replacement.' >&2
-              exit 3
-            }
+            git fetch --no-tags origin \
+              "refs/heads/${SYNC_BRANCH}:refs/remotes/origin/${SYNC_BRANCH}"
+            remote_ref="refs/remotes/origin/${SYNC_BRANCH}"
+            [[ "$(git rev-parse "$remote_ref")" == "$REMOTE_SHA" ]]
+            [[ "$(git rev-parse "${remote_ref}:upstream")" == \
+              "$(git rev-parse 'HEAD:upstream')" ]]
+            [[ "$(git rev-parse "${remote_ref}:CODESTRA_UPSTREAM_LOCK.json")" == \
+              "$(git rev-parse 'HEAD:CODESTRA_UPSTREAM_LOCK.json')" ]]
+            mapfile -t remote_parents < <(git show -s --format=%P "$remote_ref")
+            read -r -a remote_parent_values <<< "${remote_parents[0]}"
+            (( ${#remote_parent_values[@]} == 1 ))
+            git merge-base --is-ancestor "${remote_parent_values[0]}" "$GITHUB_SHA"
+            mapfile -t remote_changes < <(
+              git diff --name-only "${remote_parent_values[0]}" "$remote_ref"
+            )
+            (( ${#remote_changes[@]} >= 1 ))
+            lock_changed=0
+            for changed_path in "${remote_changes[@]}"; do
+              [[ "$changed_path" == CODESTRA_UPSTREAM_LOCK.json || \
+                "$changed_path" == upstream/* ]]
+              if [[ "$changed_path" == CODESTRA_UPSTREAM_LOCK.json ]]; then
+                lock_changed=1
+              fi
+            done
+            (( lock_changed == 1 ))
+            LOCAL_SHA="$REMOTE_SHA"
           else
             git push origin "HEAD:refs/heads/${SYNC_BRANCH}"
           fi
