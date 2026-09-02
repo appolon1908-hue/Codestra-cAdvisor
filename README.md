@@ -4,19 +4,25 @@ This repository is the service authority for container CPU, memory, filesystem, 
 
 ## Privilege boundary
 
-cAdvisor requires broad read access to host cgroups, Docker state, devices, and runtime metadata. The container therefore runs privileged, but its root filesystem and all host mounts are read-only, `/tmp` is an isolated no-exec tmpfs, collection is Docker-only, and high-cost process/TCP/scheduler metrics are disabled. This service is host infrastructure and must never share a trust boundary with untrusted workloads.
+cAdvisor requires broad read access to host cgroups, Docker state, devices, and
+runtime metadata. The reviewed topology does not grant privileged mode, host
+networking, the host PID namespace, `/dev/kmsg`, or the Docker socket to
+cAdvisor. A separate non-root proxy alone receives the read-only socket bind
+and permits only the Docker metadata requests cAdvisor requires. Root filesystems
+and host mounts are read-only, capabilities are dropped, and high-cost
+process/TCP/scheduler metrics are disabled. This service is host infrastructure
+and must never share a trust boundary with untrusted workloads.
 
-The runtime suppresses all container labels by default and permits only `com.docker.compose.project` and `com.docker.compose.service`. Environment variables, raw container IDs, customer identifiers, tenant-user identifiers, credentials, and business payload data must never become Prometheus labels.
+The runtime suppresses all container labels by default and permits only the
+seven deployment-owned `codestra.*` container labels in the repository contract.
+Prometheus relabeling drops incomplete workloads plus raw container IDs, names,
+image references, environment variables, credentials, and business payload
+data.
 
-Each host binds cAdvisor only to its approved private address:
-
-| Server class | Reference private listener |
-|---|---|
-| Core | `10.40.0.1:8080` |
-| Telephony | `10.40.0.2:8080` |
-| Provider | `10.40.0.4:8080` |
-
-Port 8080 must be denied on public interfaces and allowed only from the approved Prometheus source. `cadv.codestra.media` is an ownership/DNS identifier; it does not authorize a public Caddy/Kong route or Docker port publication.
+No host port is published. The native cAdvisor listener is isolated on the
+internal metrics network; only the mTLS metrics proxy joins the approved
+observability network. `cadv.codestra.media` is an ownership/DNS identifier and
+does not authorize a public Caddy/Kong route.
 
 ## Corporate metric contract
 
@@ -28,18 +34,35 @@ See `codestra/enterprise-profile.v1.json` and `codestra/docs/CORPORATE-FEATURES.
 
 Repository CI renders and inspects `codestra/deploy/compose.candidate.yaml`, proves immutable-image enforcement, read-only Docker API access, mTLS-only metrics exposure, read-only host mounts, label suppression, disabled profiling/high-cost metrics, and the absence of host or public port publication.
 
+The cAdvisor image replaces the binary inherited from the locked upstream
+runtime base with a binary compiled from the exact `upstream/` tree recorded in
+`CODESTRA_UPSTREAM_LOCK.json`. Its version readback is
+`v0.60.5-codestra.1 (6a0c4f2)`. Any upstream Go source change triggers the source
+build and flag-compatibility gate.
+
 A future approved deployment may use:
 
 ```bash
 cp codestra/deploy/runtime.env.example .env
 # Set accepted image digests, deployment identity, Docker socket GID, and
 # external Docker secrets for the proxy certificate, key, and Prometheus CA.
+set -a; . ./.env; set +a
+python3 scripts/validate_runtime_images.py
 docker compose --env-file .env -f codestra/deploy/compose.candidate.yaml config
 docker compose --env-file .env -f codestra/deploy/compose.candidate.yaml up -d
 docker compose --env-file .env -f codestra/deploy/compose.candidate.yaml ps
 ```
 
-The native cAdvisor listener is internal-only. Metrics must be tested through `cadvisor-metrics-proxy:9443` from the observability network with the approved Prometheus client certificate; plaintext or unauthenticated `curl` is not a valid smoke test. These commands are documentation only during the repository-first phase. Before Prometheus target activation, later deployment evidence must prove private-only reachability, expected Docker workloads, absence of environment/tenant labels, bounded sample cardinality, required labels, mTLS scrape success, and rollback.
+The Docker API proxy healthcheck performs `GET /healthz`, which succeeds only
+after the proxy can complete Docker `/_ping`; a listening socket alone is not
+readiness. The native cAdvisor listener is internal-only. Metrics must be tested
+through `cadvisor-metrics-proxy:9443` from the observability network with the
+approved Prometheus client certificate; plaintext or unauthenticated `curl` is
+not a valid smoke test. These commands are documentation only during the
+repository-first phase. Before Prometheus target activation, later deployment
+evidence must prove private-only reachability, expected Docker workloads,
+absence of environment/tenant labels, bounded sample cardinality, required
+labels, mTLS scrape success, and rollback.
 
 ## Promotion and safety
 

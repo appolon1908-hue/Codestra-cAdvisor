@@ -9,6 +9,7 @@ on:
       - '.github/workflows/validate-codestra-cadvisor.yml'
       - 'upstream/go.mod'
       - 'upstream/go.sum'
+      - 'upstream/**'
   push:
     branches: [development, test, staging, production, main]
     paths:
@@ -18,6 +19,7 @@ on:
       - '.github/workflows/validate-codestra-cadvisor.yml'
       - 'upstream/go.mod'
       - 'upstream/go.sum'
+      - 'upstream/**'
 
 permissions:
   contents: read
@@ -65,10 +67,22 @@ jobs:
           CADVISOR_DEVICE_METADATA_PATH: /tmp/codestra-cadvisor/dev-disk
           CODESTRA_OBSERVABILITY_NETWORK: codestra-observability
         run: |
+          python scripts/validate_runtime_images.py
           docker compose -f codestra/deploy/compose.candidate.yaml config > /tmp/codestra-cadvisor-compose.yaml
           test -s /tmp/codestra-cadvisor-compose.yaml
           ! grep -Eq 'published:|host_ip:|:latest([[:space:]]|$)|privileged: true|network_mode: host|pid: host|/dev/kmsg' /tmp/codestra-cadvisor-compose.yaml
           test "$(grep -c '/var/run/docker.sock' /tmp/codestra-cadvisor-compose.yaml)" -ge 2
+          python - <<'PY'
+          import yaml
+          from pathlib import Path
+          from scripts.validate_runtime_images import valid_image
+
+          compose = yaml.safe_load(Path('/tmp/codestra-cadvisor-compose.yaml').read_text())
+          for name, service in compose['services'].items():
+              assert valid_image(service['image']), f'mutable service image: {name}'
+              for key, value in service.get('build', {}).get('args', {}).items():
+                  assert valid_image(value), f'mutable build image: {name}/{key}'
+          PY
 
       - name: Set up Go from locked cAdvisor source
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
@@ -78,9 +92,10 @@ jobs:
 
       - name: Format, vet, unit-test, and compile security proxies
         run: |
-          gofmt -w codestra/deploy/proxy.go codestra/deploy/proxy_test.go codestra/deploy/healthcheck.go
-          git diff --exit-code -- codestra/deploy/proxy.go codestra/deploy/proxy_test.go codestra/deploy/healthcheck.go
+          gofmt -w codestra/deploy/proxy.go codestra/deploy/proxy_test.go codestra/deploy/healthcheck.go codestra/deploy/healthcheck_test.go
+          git diff --exit-code -- codestra/deploy/proxy.go codestra/deploy/proxy_test.go codestra/deploy/healthcheck.go codestra/deploy/healthcheck_test.go
           go test codestra/deploy/proxy.go codestra/deploy/proxy_test.go
+          go test codestra/deploy/healthcheck.go codestra/deploy/healthcheck_test.go
           go vet codestra/deploy/proxy.go
           go vet codestra/deploy/healthcheck.go
           CGO_ENABLED=0 go build -trimpath -o /tmp/codestra-cadvisor-proxy codestra/deploy/proxy.go
