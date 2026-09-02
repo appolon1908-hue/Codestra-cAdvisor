@@ -23,4 +23,6 @@ class ReadinessTests(unittest.TestCase):
     def test_legacy_unsafe_manifests_are_absent(self) -> None:
         for relative in ("deploy/compose.yaml", "codestra/runtime-v1/compose.yaml", "codestra/runtime-v1/compose-codestra.yaml"):
             self.assertFalse((ROOT / relative).exists())
+    def test_vendored_upstream_is_byte_preserved(self) -> None:
+        self.assertEqual((ROOT / ".gitattributes").read_text().splitlines()[-1], "upstream/** -whitespace")
 if __name__ == "__main__": unittest.main()
