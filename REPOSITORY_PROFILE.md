@@ -9,5 +9,6 @@
 - Direct Docker socket consumer: proxy only, read-only mount, allowlisted API methods and paths
 - Promotion path: `development -> test -> staging -> production -> main`
 - Production activation from this source: `NO`
+- Source hygiene: whitespace enforcement applies to Codestra-owned files; `upstream/` is byte-preserved and exempt through `.gitattributes`
 
 The canonical deployment source is `codestra/deploy/compose.candidate.yaml`. Legacy privileged, host-network, device-mounted manifests were removed because they conflicted with this enforced boundary.

@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 IMAGE = re.compile(r"^[a-z0-9./_-]+@sha256:[0-9a-f]{64}$")
 AUTHORITY = "appolon1908-hue/Codestra-Telemetry/.github/workflows/reusable-release-image.yml@9a6aebb849bbc068105c10d9d1dfd39ebf6f78bd"
 REQUIRED = (
+    ".gitattributes",
     "REPOSITORY_PROFILE.md", "SECURITY.md", ".github/CODEOWNERS",
     "docs/BACKUP_RESTORE_ROLLBACK.md", "docs/UPGRADE.md", "codestra/.dockerignore",
     "codestra/deploy/compose.candidate.yaml", "codestra/release/runtime-base.lock.json",
@@ -29,6 +30,8 @@ def load(path: str) -> dict:
 def validate() -> None:
     missing = [path for path in REQUIRED if not (ROOT / path).is_file()]
     if missing: fail(f"missing readiness files: {missing}")
+    if (ROOT / ".gitattributes").read_text().splitlines()[-1] != "upstream/** -whitespace":
+        fail("vendored upstream whitespace boundary is missing")
     present_legacy = [path for path in LEGACY if (ROOT / path).exists()]
     if present_legacy: fail(f"unsafe superseded deployment authority remains: {present_legacy}")
     lock = load("codestra/release/runtime-base.lock.json")
