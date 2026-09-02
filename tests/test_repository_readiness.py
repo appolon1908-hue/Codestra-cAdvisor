@@ -25,4 +25,12 @@ class ReadinessTests(unittest.TestCase):
             self.assertFalse((ROOT / relative).exists())
     def test_vendored_upstream_is_byte_preserved(self) -> None:
         self.assertEqual((ROOT / ".gitattributes").read_text().splitlines()[-1], "upstream/** -whitespace")
+        lock = json.loads((ROOT / "CODESTRA_UPSTREAM_LOCK.json").read_text())
+        tree = subprocess.run(
+            ["git", "rev-parse", "HEAD:upstream"], cwd=ROOT, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        self.assertEqual(lock["imported_tree_sha"], tree)
+        workflow = (ROOT / ".github/workflows/validate-repository-readiness.yml").read_text()
+        self.assertIn("git diff --check \"$BASE_SHA\" \"$HEAD_SHA\" -- . ':(exclude)upstream/**'", workflow)
 if __name__ == "__main__": unittest.main()
