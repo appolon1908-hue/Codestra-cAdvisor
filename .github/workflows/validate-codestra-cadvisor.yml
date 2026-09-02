@@ -73,20 +73,15 @@ jobs:
           ! grep -Eq 'published:|host_ip:|:latest([[:space:]]|$)|privileged: true|network_mode: host|pid: host|/dev/kmsg' /tmp/codestra-cadvisor-compose.yaml
           test "$(grep -c '/var/run/docker.sock' /tmp/codestra-cadvisor-compose.yaml)" -ge 2
           python - <<'PY'
-          import re
           import yaml
           from pathlib import Path
+          from scripts.validate_runtime_images import valid_image
 
-          image = re.compile(
-              r'^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?'
-              r'(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*'
-              r'(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@sha256:[0-9a-f]{64}$'
-          )
           compose = yaml.safe_load(Path('/tmp/codestra-cadvisor-compose.yaml').read_text())
           for name, service in compose['services'].items():
-              assert image.fullmatch(service['image']), f'mutable service image: {name}'
+              assert valid_image(service['image']), f'mutable service image: {name}'
               for key, value in service.get('build', {}).get('args', {}).items():
-                  assert image.fullmatch(value), f'mutable build image: {name}/{key}'
+                  assert valid_image(value), f'mutable build image: {name}/{key}'
           PY
 
       - name: Set up Go from locked cAdvisor source
