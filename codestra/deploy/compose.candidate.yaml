@@ -3,8 +3,8 @@ name: codestra-cadvisor
 services:
   docker-api-proxy:
     build:
-      context: ../..
-      dockerfile: codestra/deploy/Dockerfile.proxy
+      context: ..
+      dockerfile: deploy/Dockerfile.proxy
       args:
         GO_BUILDER_IMAGE: ${GO_BUILDER_IMAGE:?set an immutable Go builder image including sha256 digest}
         PROXY_RUNTIME_IMAGE: ${PROXY_RUNTIME_IMAGE:?set an immutable minimal runtime image including sha256 digest}
@@ -72,8 +72,8 @@ services:
 
   cadvisor:
     build:
-      context: ../..
-      dockerfile: codestra/deploy/Dockerfile.cadvisor
+      context: ..
+      dockerfile: deploy/Dockerfile.cadvisor
       args:
         GO_BUILDER_IMAGE: ${GO_BUILDER_IMAGE:?set an immutable Go builder image including sha256 digest}
         CADVISOR_BASE_IMAGE: ${CADVISOR_BASE_IMAGE:?set an immutable official cAdvisor image including sha256 digest}
