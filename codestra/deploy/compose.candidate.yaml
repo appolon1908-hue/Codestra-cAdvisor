@@ -22,7 +22,7 @@ services:
       PROXY_LISTEN_ADDRESS: 0.0.0.0:2375
       DOCKER_SOCKET_PATH: /var/run/docker.sock
       MAX_CONCURRENT_REQUESTS: "32"
-      CODESTRA_HEALTHCHECK_ADDRESS: 127.0.0.1:2375
+      CODESTRA_HEALTHCHECK_URL: http://127.0.0.1:2375/healthz
     expose:
       - "2375"
     networks:
@@ -72,11 +72,12 @@ services:
 
   cadvisor:
     build:
-      context: ..
-      dockerfile: deploy/Dockerfile.cadvisor
+      context: ../..
+      dockerfile: codestra/deploy/Dockerfile.cadvisor
       args:
         GO_BUILDER_IMAGE: ${GO_BUILDER_IMAGE:?set an immutable Go builder image including sha256 digest}
-        CADVISOR_BASE_IMAGE: ${CADVISOR_BASE_IMAGE:?set an immutable official cAdvisor image including sha256 digest}
+        CADVISOR_BASE_IMAGE: ${CADVISOR_BASE_IMAGE:?set an immutable official cAdvisor runtime substrate including sha256 digest}
+        CADVISOR_SOURCE_COMMIT: ${CADVISOR_SOURCE_COMMIT:?set the exact 40-character vendored cAdvisor source commit}
     image: ${CODESTRA_CADVISOR_IMAGE:?set the immutable Codestra cAdvisor image including sha256 digest}
     command:
       - --docker=tcp://docker-api-proxy:2375
@@ -103,7 +104,7 @@ services:
     read_only: true
     stop_grace_period: 60s
     environment:
-      CODESTRA_HEALTHCHECK_ADDRESS: 127.0.0.1:8080
+      CODESTRA_HEALTHCHECK_URL: http://127.0.0.1:8080/healthz
     expose:
       - "8080"
     depends_on:
@@ -196,7 +197,7 @@ services:
       TLS_KEY_FILE: /run/secrets/cadvisor_proxy_server_key
       TLS_CLIENT_CA_FILE: /run/secrets/prometheus_client_ca
       MAX_CONCURRENT_REQUESTS: "16"
-      CODESTRA_HEALTHCHECK_ADDRESS: 127.0.0.1:9443
+      CODESTRA_HEALTHCHECK_URL: http://cadvisor:8080/healthz
     secrets:
       - cadvisor_proxy_server_cert
       - cadvisor_proxy_server_key
