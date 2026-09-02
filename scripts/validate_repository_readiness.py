@@ -15,7 +15,8 @@ REQUIRED = (
     "docs/BACKUP_RESTORE_ROLLBACK.md", "docs/UPGRADE.md", "codestra/.dockerignore",
     "codestra/deploy/compose.candidate.yaml", "codestra/release/runtime-base.lock.json",
     "codestra/release/cadvisor-image-build.v1.json", "codestra/release/proxy-image-build.v1.json",
-    ".github/workflows/release-images.yml", "requirements-validation.txt",
+    ".github/workflows/release-images.yml", ".github/workflows/upstream-source-sync.yml",
+    "requirements-validation.txt",
 )
 LEGACY = (
     "deploy/compose.yaml", "codestra/runtime-v1/compose.yaml",
@@ -42,12 +43,24 @@ def validate() -> None:
     if lock.get("cadvisorBinaryRevisionReadback") != lock.get("cadvisorUpstreamTagCommit", "")[:7]:
         fail("cAdvisor binary revision readback mismatch")
     upstream = load("CODESTRA_UPSTREAM_LOCK.json")
+    if upstream.get("schema_version") != "1.1": fail("upstream lock schema must be 1.1")
     if lock.get("vendoredSourceSnapshotCommit") != upstream.get("upstream_commit"): fail("vendored source identity mismatch")
     imported_tree = subprocess.run(
         ["git", "rev-parse", "HEAD:upstream"], cwd=ROOT, check=True,
         capture_output=True, text=True,
     ).stdout.strip()
     if upstream.get("imported_tree_sha") != imported_tree: fail("vendored source tree identity mismatch")
+    sync = (ROOT / ".github/workflows/upstream-source-sync.yml").read_text()
+    sync_requirements = (
+        "git add -A upstream",
+        'IMPORTED_TREE_SHA="$(git rev-parse :upstream)"',
+        "'schema_version':'1.1'",
+        "'imported_tree_sha':os.environ['IMPORTED_TREE_SHA']",
+        'test "$(git rev-parse :upstream)" = "$(python3 -c',
+    )
+    for requirement in sync_requirements:
+        if requirement not in sync: fail(f"upstream sync omits tree-lock control: {requirement}")
+    if "'schema_version':'1.0'" in sync: fail("upstream sync would regress the generated lock schema")
     if lock.get("vendoredSourceUsedByImageBuild") is not False or lock.get("productionActivation") is not False:
         fail("runtime source/activation boundary mismatch")
     manifests = {
