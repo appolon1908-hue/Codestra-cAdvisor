@@ -2,10 +2,29 @@
 
 ARG GO_BUILDER_IMAGE
 ARG CADVISOR_BASE_IMAGE
+ARG CADVISOR_SOURCE_COMMIT
+
+FROM ${GO_BUILDER_IMAGE} AS cadvisor-builder
+ARG CADVISOR_SOURCE_COMMIT
+WORKDIR /src
+COPY CODESTRA_UPSTREAM_LOCK.json /tmp/CODESTRA_UPSTREAM_LOCK.json
+COPY upstream/go.mod upstream/go.sum ./
+RUN go mod download
+COPY upstream/ ./
+RUN set -eu; \
+    case "${CADVISOR_SOURCE_COMMIT}" in (*[!0-9a-f]*|'') exit 1;; esac; \
+    test "${#CADVISOR_SOURCE_COMMIT}" -eq 40; \
+    grep -Fq "\"upstream_commit\": \"${CADVISOR_SOURCE_COMMIT}\"" /tmp/CODESTRA_UPSTREAM_LOCK.json; \
+    CGO_ENABLED=0 GOOS=linux go build \
+      -trimpath \
+      -ldflags="-s -w -buildid= -X github.com/google/cadvisor/version.Version=codestra-source -X github.com/google/cadvisor/version.Revision=${CADVISOR_SOURCE_COMMIT} -X github.com/google/cadvisor/version.Branch=codestra-vendored" \
+      -o /out/cadvisor \
+      ./cmd; \
+    /out/cadvisor --version 2>&1 | grep -Fq "${CADVISOR_SOURCE_COMMIT}"
 
 FROM ${GO_BUILDER_IMAGE} AS healthcheck-builder
 WORKDIR /src
-COPY deploy/healthcheck.go ./healthcheck.go
+COPY codestra/deploy/healthcheck.go ./healthcheck.go
 RUN CGO_ENABLED=0 GOOS=linux go build \
       -trimpath \
       -ldflags='-s -w -buildid=' \
@@ -13,10 +32,15 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
       ./healthcheck.go
 
 FROM ${CADVISOR_BASE_IMAGE}
+ARG CADVISOR_SOURCE_COMMIT
 LABEL org.opencontainers.image.title="Codestra Corporate cAdvisor"
-LABEL org.opencontainers.image.description="Private container resource metrics with governed labels and no direct Docker socket"
+LABEL org.opencontainers.image.description="Private container resource metrics built from the exact governed source tree"
 LABEL org.opencontainers.image.vendor="Codestra"
+LABEL org.opencontainers.image.source="https://github.com/appolon1908-hue/Codestra-cAdvisor"
+LABEL org.opencontainers.image.revision="${CADVISOR_SOURCE_COMMIT}"
 
+COPY --from=cadvisor-builder --chown=0:0 --chmod=0555 /out/cadvisor /usr/bin/cadvisor
 COPY --from=healthcheck-builder --chown=0:0 --chmod=0555 /out/codestra-healthcheck /codestra-healthcheck
 
 USER 0:0
+ENTRYPOINT ["/usr/bin/cadvisor"]
