@@ -3,6 +3,7 @@
 from __future__ import annotations
 import json, re
 from pathlib import Path
+import subprocess
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +43,11 @@ def validate() -> None:
         fail("cAdvisor binary revision readback mismatch")
     upstream = load("CODESTRA_UPSTREAM_LOCK.json")
     if lock.get("vendoredSourceSnapshotCommit") != upstream.get("upstream_commit"): fail("vendored source identity mismatch")
+    imported_tree = subprocess.run(
+        ["git", "rev-parse", "HEAD:upstream"], cwd=ROOT, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    if upstream.get("imported_tree_sha") != imported_tree: fail("vendored source tree identity mismatch")
     if lock.get("vendoredSourceUsedByImageBuild") is not False or lock.get("productionActivation") is not False:
         fail("runtime source/activation boundary mismatch")
     manifests = {
