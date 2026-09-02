@@ -19,7 +19,8 @@ class ReadinessTests(unittest.TestCase):
         proxy = json.loads((ROOT / "codestra/release/proxy-image-build.v1.json").read_text())
         self.assertEqual(cadvisor["buildArgs"]["CADVISOR_BASE_IMAGE"], lock["cadvisorBaseImage"])
         self.assertEqual(proxy["buildArgs"]["PROXY_RUNTIME_IMAGE"], lock["proxyRuntimeImage"])
-        self.assertEqual(lock["cadvisorBinaryRevisionReadback"], lock["cadvisorUpstreamTagCommit"][:7])
+        self.assertEqual(lock["cadvisorBinaryRevisionReadback"], lock["vendoredSourceSnapshotCommit"][:7])
+        self.assertTrue(lock["vendoredSourceUsedByImageBuild"])
     def test_legacy_unsafe_manifests_are_absent(self) -> None:
         for relative in ("deploy/compose.yaml", "codestra/runtime-v1/compose.yaml", "codestra/runtime-v1/compose-codestra.yaml"):
             self.assertFalse((ROOT / relative).exists())
@@ -33,4 +34,27 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(lock["imported_tree_sha"], tree)
         workflow = (ROOT / ".github/workflows/validate-repository-readiness.yml").read_text()
         self.assertIn("git diff --check \"$BASE_SHA\" \"$HEAD_SHA\" -- . ':(exclude)upstream/**'", workflow)
+
+    def test_runtime_image_validator_rejects_mutable_and_malformed_values(self) -> None:
+        import importlib.util
+
+        path = ROOT / "scripts/validate_runtime_images.py"
+        spec = importlib.util.spec_from_file_location("runtime_images", path)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        good = {
+            name: f"registry.example/codestra/{name.lower()}:v1@sha256:{'a' * 64}"
+            for name in module.REQUIRED
+        }
+        module.validate(good)
+        good["CODESTRA_CADVISOR_IMAGE"] = (
+            f"registry.example:5000/team/cadvisor@sha256:{'b' * 64}"
+        )
+        module.validate(good)
+        for invalid in ("repo:latest", "repo:sha256-test", "repo@sha256:1234"):
+            values = dict(good)
+            values["CODESTRA_CADVISOR_IMAGE"] = invalid
+            with self.assertRaises(SystemExit):
+                module.validate(values)
 if __name__ == "__main__": unittest.main()

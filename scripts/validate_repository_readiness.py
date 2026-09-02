@@ -10,13 +10,13 @@ ROOT = Path(__file__).resolve().parents[1]
 IMAGE = re.compile(r"^[a-z0-9./_-]+@sha256:[0-9a-f]{64}$")
 AUTHORITY = "appolon1908-hue/Codestra-Telemetry/.github/workflows/reusable-release-image.yml@9a6aebb849bbc068105c10d9d1dfd39ebf6f78bd"
 REQUIRED = (
-    ".gitattributes",
+    ".dockerignore", ".gitattributes",
     "REPOSITORY_PROFILE.md", "SECURITY.md", ".github/CODEOWNERS",
     "docs/BACKUP_RESTORE_ROLLBACK.md", "docs/UPGRADE.md", "codestra/.dockerignore",
     "codestra/deploy/compose.candidate.yaml", "codestra/release/runtime-base.lock.json",
     "codestra/release/cadvisor-image-build.v1.json", "codestra/release/proxy-image-build.v1.json",
     ".github/workflows/release-images.yml", ".github/workflows/upstream-source-sync.yml",
-    "requirements-validation.txt",
+    "requirements-validation.txt", "scripts/validate_runtime_images.py",
 )
 LEGACY = (
     "deploy/compose.yaml", "codestra/runtime-v1/compose.yaml",
@@ -40,11 +40,11 @@ def validate() -> None:
     if lock.get("artifactModel") != "repository-built-signed-images": fail("cAdvisor must use Model A")
     for field in ("buildFrontendImage", "builderImage", "cadvisorBaseImage", "proxyRuntimeImage"):
         if not IMAGE.fullmatch(str(lock.get(field, ""))): fail(f"mutable build identity: {field}")
-    if lock.get("cadvisorBinaryRevisionReadback") != lock.get("cadvisorUpstreamTagCommit", "")[:7]:
-        fail("cAdvisor binary revision readback mismatch")
     upstream = load("CODESTRA_UPSTREAM_LOCK.json")
     if upstream.get("schema_version") != "1.1": fail("upstream lock schema must be 1.1")
     if lock.get("vendoredSourceSnapshotCommit") != upstream.get("upstream_commit"): fail("vendored source identity mismatch")
+    if lock.get("cadvisorBinaryRevisionReadback") != upstream.get("upstream_commit", "")[:7]:
+        fail("cAdvisor binary revision readback does not match vendored source")
     imported_tree = subprocess.run(
         ["git", "rev-parse", "HEAD:upstream"], cwd=ROOT, check=True,
         capture_output=True, text=True,
@@ -61,7 +61,7 @@ def validate() -> None:
     for requirement in sync_requirements:
         if requirement not in sync: fail(f"upstream sync omits tree-lock control: {requirement}")
     if "'schema_version':'1.0'" in sync: fail("upstream sync would regress the generated lock schema")
-    if lock.get("vendoredSourceUsedByImageBuild") is not False or lock.get("productionActivation") is not False:
+    if lock.get("vendoredSourceUsedByImageBuild") is not True or lock.get("productionActivation") is not False:
         fail("runtime source/activation boundary mismatch")
     manifests = {
         "cadvisor": load("codestra/release/cadvisor-image-build.v1.json"),
@@ -74,7 +74,8 @@ def validate() -> None:
     for image_id, manifest in manifests.items():
         if manifest.get("schemaVersion") != "1.0.0" or manifest.get("imageId") != image_id:
             fail(f"image manifest identity mismatch: {image_id}")
-        if manifest.get("context") != "codestra" or manifest.get("buildArgs") != expected_args[image_id]:
+        expected_context = "." if image_id == "cadvisor" else "codestra"
+        if manifest.get("context") != expected_context or manifest.get("buildArgs") != expected_args[image_id]:
             fail(f"image manifest context/build arguments mismatch: {image_id}")
         if manifest.get("productionActivation") is not False: fail(f"image manifest activates production: {image_id}")
         dockerfile = (ROOT / manifest["dockerfile"]).read_text()
@@ -88,7 +89,7 @@ def validate() -> None:
         if service.get("privileged") is True or service.get("network_mode") == "host" or service.get("pid") == "host" or service.get("ports"):
             fail(f"unsafe runtime boundary: {name}")
     if services["docker-api-proxy"].get("build", {}).get("context") != "..": fail("proxy build context mismatch")
-    if services["cadvisor"].get("build", {}).get("context") != "..": fail("cAdvisor build context mismatch")
+    if services["cadvisor"].get("build", {}).get("context") != "../..": fail("cAdvisor build context mismatch")
     release = yaml.safe_load((ROOT / ".github/workflows/release-images.yml").read_text())
     jobs = release.get("jobs", {})
     expected_jobs = {"release-cadvisor": "cadvisor", "release-proxy": "cadvisor-proxy"}
