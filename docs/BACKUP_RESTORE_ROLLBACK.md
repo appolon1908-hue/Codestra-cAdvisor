@@ -6,6 +6,8 @@ Before installation or rollback, validate every recorded image through
 `scripts/validate_runtime_images.py`. A registry port outside `1..65535` is not
 a usable immutable identity and blocks the operation before Compose rendering
 or any pull attempt.
+Only a numeric field in the registry authority before `/` is interpreted as a
+port; a numeric image tag remains a valid immutable rollback identity.
 
 Rollback both images as one topology change: validate the previous proxy,
 cAdvisor, builder, and base identities with
