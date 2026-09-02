@@ -32,6 +32,8 @@
 ## Runtime hardening
 
 - immutable builder, proxy runtime, cAdvisor base and final image references;
+- optional private-registry ports validated as integers in the TCP range
+  `1..65535` before Compose rendering or image access;
 - read-only root filesystems;
 - all Linux capabilities dropped;
 - `no-new-privileges` enabled;

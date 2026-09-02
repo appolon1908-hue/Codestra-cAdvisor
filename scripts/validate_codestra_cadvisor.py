@@ -25,6 +25,10 @@ CADVISOR_DOCKERFILE = CODESTRA / "deploy" / "Dockerfile.cadvisor"
 ENV_EXAMPLE = CODESTRA / "deploy" / "runtime.env.example"
 OPERATING_MODEL = CODESTRA / "docs" / "OPERATING-MODEL.md"
 RUNTIME_FEATURES = CODESTRA / "docs" / "RUNTIME-FEATURES.md"
+RUNTIME_IMAGE_VALIDATOR = ROOT / "scripts" / "validate_runtime_images.py"
+IMAGE_TEMPLATE = re.compile(
+    r"^\$\{([A-Z][A-Z0-9_]*_IMAGE):\?[^}\r\n]+\}$"
+)
 
 BUSINESSES = {
     "platform",
@@ -521,10 +525,16 @@ def validate_compose() -> None:
     if socket_consumers != ["docker-api-proxy"]:
         fail(f"Docker socket consumer mismatch: {socket_consumers}")
 
+    expected_service_images = {
+        "docker-api-proxy": "CODESTRA_CADVISOR_PROXY_IMAGE",
+        "cadvisor": "CODESTRA_CADVISOR_IMAGE",
+        "cadvisor-metrics-proxy": "CODESTRA_CADVISOR_PROXY_IMAGE",
+    }
     for name, service in services.items():
         image = str(service.get("image", ""))
-        if "sha256" not in image:
-            fail(f"service image must require an immutable digest: {name}")
+        match = IMAGE_TEMPLATE.fullmatch(image)
+        if not match or match.group(1) != expected_service_images[name]:
+            fail(f"service image must use its fail-closed image variable: {name}")
     if set(docker_proxy.get("build", {}).get("args", {})) != {
         "GO_BUILDER_IMAGE",
         "PROXY_RUNTIME_IMAGE",
@@ -535,6 +545,11 @@ def validate_compose() -> None:
         "CADVISOR_BASE_IMAGE",
     }:
         fail("cAdvisor build must pin builder and upstream images")
+    for service_name in ("docker-api-proxy", "cadvisor"):
+        for variable, expression in services[service_name]["build"]["args"].items():
+            match = IMAGE_TEMPLATE.fullmatch(str(expression))
+            if not match or match.group(1) != variable:
+                fail(f"build image argument must fail closed: {service_name}/{variable}")
 
     serialized = COMPOSE.read_text(encoding="utf-8")
     for forbidden in (
@@ -571,6 +586,9 @@ def validate_packaging_docs_and_secrets() -> None:
         "CGO_ENABLED=0",
         "-trimpath",
         "/codestra-healthcheck",
+        "COPY upstream/ ./",
+        "/out/cadvisor /usr/bin/cadvisor",
+        "Revision=6a0c4f2",
         "USER 0:0",
     ):
         if fragment not in cadvisor_dockerfile:
@@ -579,8 +597,19 @@ def validate_packaging_docs_and_secrets() -> None:
         fail("cAdvisor Dockerfiles may not use latest tags")
 
     healthcheck = require_file(HEALTHCHECK)
-    if "net.DialTimeout" not in healthcheck or "os/exec" in healthcheck or "exec.Command" in healthcheck:
-        fail("cAdvisor healthcheck must be a direct native listener probe")
+    for fragment in (
+        "CODESTRA_HEALTHCHECK_URL",
+        "checkHTTP(endpoint)",
+        "response.StatusCode < 200 || response.StatusCode >= 300",
+        "http.ErrUseLastResponse",
+        "net.DialTimeout",
+    ):
+        if fragment not in healthcheck:
+            fail(f"cAdvisor healthcheck omits fail-closed readiness: {fragment}")
+    if "os/exec" in healthcheck or "exec.Command" in healthcheck:
+        fail("cAdvisor healthcheck may not invoke a shell")
+
+    require_file(RUNTIME_IMAGE_VALIDATOR)
 
     env_text = require_file(ENV_EXAMPLE)
     for fragment in (
