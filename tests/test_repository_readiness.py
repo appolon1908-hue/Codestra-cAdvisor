@@ -48,6 +48,10 @@ class ReadinessTests(unittest.TestCase):
             for name in module.REQUIRED
         }
         module.validate(good)
+        good["CODESTRA_CADVISOR_IMAGE"] = (
+            f"registry.example:5000/team/cadvisor@sha256:{'b' * 64}"
+        )
+        module.validate(good)
         for invalid in ("repo:latest", "repo:sha256-test", "repo@sha256:1234"):
             values = dict(good)
             values["CODESTRA_CADVISOR_IMAGE"] = invalid
