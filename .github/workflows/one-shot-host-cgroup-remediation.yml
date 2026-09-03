@@ -1,0 +1,78 @@
+name: One-shot cAdvisor host cgroup remediation
+
+on:
+  push:
+    branches: [fix/cadvisor-host-cgroup-v2-20260903]
+    paths: [.github/workflows/one-shot-host-cgroup-remediation.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out remediation branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: fix/cadvisor-host-cgroup-v2-20260903
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply exact source remediation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          compose_path = Path('codestra/deploy/compose.candidate.yaml')
+          compose = compose_path.read_text(encoding='utf-8')
+          before = '    user: "0:0"\n    read_only: true\n'
+          after = '    user: "0:0"\n    cgroup: host\n    read_only: true\n'
+          if compose.count(before) != 1:
+              raise SystemExit('expected exactly one cAdvisor user/read-only boundary')
+          compose_path.write_text(compose.replace(before, after, 1), encoding='utf-8')
+
+          validator_path = Path('scripts/validate_codestra_cadvisor.py')
+          validator = validator_path.read_text(encoding='utf-8')
+          runtime_before = '''    for field in ("devKmsg", "hostNetwork", "hostPidNamespace", "privilegedMode"):\n        if host_access.get(field) is not False:\n            fail(f"cAdvisor host-access boundary must remain false: {field}")\n'''
+          runtime_after = runtime_before + '''    if host_access.get("hostCgroupNamespace") is not True:\n        fail("cAdvisor must join the host cgroup namespace for complete cgroup-v2 metrics")\n'''
+          if validator.count(runtime_before) != 1:
+              raise SystemExit('runtime host-access validator anchor drifted')
+          validator = validator.replace(runtime_before, runtime_after, 1)
+          compose_before = '''    if cadvisor.get("user") != "0:0":\n        fail("cAdvisor compatibility candidate must honestly run as container root")\n'''
+          compose_after = compose_before + '''    if cadvisor.get("cgroup") != "host":\n        fail("cAdvisor must use the host cgroup namespace")\n'''
+          if validator.count(compose_before) != 1:
+              raise SystemExit('compose validator anchor drifted')
+          validator_path.write_text(
+              validator.replace(compose_before, compose_after, 1), encoding='utf-8'
+          )
+
+          runtime_path = Path('codestra/runtime.v1.json')
+          runtime = json.loads(runtime_path.read_text(encoding='utf-8'))
+          host_access = runtime.setdefault('hostAccess', {})
+          host_access['hostCgroupNamespace'] = True
+          runtime_path.write_text(json.dumps(runtime, indent=2) + '\n', encoding='utf-8')
+
+          test_path = Path('tests/test_host_cgroup_namespace.py')
+          test_path.write_text('''from __future__ import annotations\n\nimport json\nfrom pathlib import Path\nimport unittest\n\nROOT = Path(__file__).resolve().parents[1]\n\n\nclass HostCgroupNamespaceTests(unittest.TestCase):\n    def test_candidate_and_contract_require_host_cgroup_namespace(self) -> None:\n        compose = (ROOT / "codestra/deploy/compose.candidate.yaml").read_text()\n        self.assertEqual(compose.count("\\n    cgroup: host\\n"), 1)\n        runtime = json.loads((ROOT / "codestra/runtime.v1.json").read_text())\n        self.assertIs(runtime["hostAccess"]["hostCgroupNamespace"], True)\n        validator = (ROOT / "scripts/validate_codestra_cadvisor.py").read_text()\n        self.assertIn('cadvisor.get("cgroup") != "host"', validator)\n        self.assertIn('host_access.get("hostCgroupNamespace") is not True', validator)\n\n\nif __name__ == "__main__":\n    unittest.main()\n''', encoding='utf-8')
+
+          Path('.github/workflows/one-shot-host-cgroup-remediation.yml').unlink()
+          PY
+
+          python3 -m py_compile scripts/validate_codestra_cadvisor.py tests/test_host_cgroup_namespace.py
+          python3 -m unittest tests.test_host_cgroup_namespace
+          git diff --check
+
+      - name: Commit reviewed payload and remove writer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'codestra-repository-automation'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix(cadvisor): expose complete cgroup-v2 metrics'
+          git push origin HEAD:fix/cadvisor-host-cgroup-v2-20260903
